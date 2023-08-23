@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 
@@ -11,25 +12,58 @@ import Data.String (IsString (..))
 import Foreign (allocaArray0)
 import Foreign.C (CInt (..), CSize (..), CString, peekCString, throwErrnoIfMinus1_)
 import Network.Wreq (post)
-import System.Environment (getArgs)
+import Options.Applicative
 import SystemD (connectSystem, monitorService, systemdSubscribe)
 import Text.Printf (printf)
+
+data Options = Options
+  { endpoint :: String,
+    services :: [String]
+  }
+
+parseOptions :: IO Options
+parseOptions = execParser opts
+  where
+    opts =
+      info
+        (parser <**> helper)
+        ( fullDesc
+            <> progDesc "Send ntfy alerts when SystemD services change state"
+        )
+
+    parser =
+      Options
+        <$> strOption
+          ( short 'n'
+              <> long "endpoint"
+              <> help "The endpoint to send the notification to"
+              <> metavar "URL"
+          )
+        <*> many
+          ( strOption
+              ( short 's'
+                  <> long "service"
+                  <> help "Repeated. Units to monitor. Must include the suffix (.service)"
+                  <> metavar "SERVICE"
+              )
+          )
 
 notify :: ByteString -> IO ()
 notify message = void $ post "http://ntfy.sh/elf-goblin-alerts" message
 
 main :: IO ()
 main = do
-  serviceNames <- getArgs
+  opts <- parseOptions
   hostname <- getHostName
 
   client <- connectSystem
 
   systemdSubscribe client
 
-  for_ serviceNames $ \serviceName -> do
+  for_ opts.services $ \serviceName -> do
     mHandler <- monitorService client serviceName $ \activeState -> do
-      notify (fromString $ printf "%s: Service %s state is %s" hostname serviceName activeState)
+      let msg :: ByteString = fromString $ printf "%s: Service %s state is %s" hostname serviceName activeState
+      void $ post opts.endpoint msg
 
     case mHandler of
       Nothing -> printf "Could not monitor service %s\n" serviceName
