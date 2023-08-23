@@ -26,14 +26,19 @@ import DBus.Client
     getProperty,
     matchAny,
   )
+import DBus.Internal.Types (Value)
 import DBus.TH.EDSL
 import Data.Foldable (for_)
 import Data.Functor ((<&>))
 import Data.Map (Map)
 import Data.Map qualified as Map
+import Data.String (IsString (..))
+import Network.Wreq (post)
 import Safe (fromJustNote)
 import System.Environment (getArgs)
 import Text.Printf (printf)
+import Data.ByteString qualified as BS
+import Data.ByteString (ByteString)
 
 type UnitObject = ObjectPath
 
@@ -80,16 +85,19 @@ onPropertiesChanged client objectPath f =
           ] -> f interfaceName changedProperties invalidatedProperties
         _ -> error "Unexpected value for PropertiesChanged signal"
 
-monitorService :: Client -> String -> IO (Maybe SignalHandler)
-monitorService client serviceName = do
+monitorService :: Client -> String -> (String -> IO ()) -> IO (Maybe SignalHandler)
+monitorService client serviceName f = do
   getUnit client serviceName >>= \case
     Just unitObject -> do
       handler <- onPropertiesChanged client unitObject $ \_ changedProperties _ ->
         case fromVariant @String =<< Map.lookup "ActiveState" changedProperties of
-          Just activeState -> printf "Active state for %s is %s\n" serviceName activeState
+          Just activeState -> f activeState
           Nothing -> pure ()
       return (Just handler)
     Nothing -> return Nothing
+
+notify :: ByteString -> IO ()
+notify message = void $ post "http://ntfy.sh/elf-goblin-alerts" message
 
 main :: IO ()
 main = do
@@ -100,7 +108,12 @@ main = do
   systemdSubscribe client
 
   for_ serviceNames $ \serviceName -> do
-    monitorService client serviceName >>= \case
+    mHandler <- monitorService client serviceName $ \activeState -> do
+      let msg = printf "Active state for %s is %s" serviceName activeState
+      putStrLn msg
+      notify (fromString msg)
+
+    case mHandler of
       Nothing -> printf "Could not monitor service %s\n" serviceName
       _ -> pure ()
 

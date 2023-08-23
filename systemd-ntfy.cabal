@@ -27,5 +27,7 @@ executable systemd-ntfy
       , dbus-th == 0.1.3.0
       , safe == 0.3.19
       , containers == 0.6.7
+      , wreq == 0.5.4.2
+      , bytestring == 0.11.5.2
     hs-source-dirs:   app
     default-language: GHC2021
