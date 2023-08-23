@@ -1,0 +1,5 @@
+ignore-project: False
+documentation: False
+
+package *
+  documentation: False
