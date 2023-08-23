@@ -19,7 +19,8 @@ common warnings
 executable systemd-ntfy
     import:           warnings
     main-is:          Main.hs
-    -- other-modules:
+    other-modules:
+      SystemD
     -- other-extensions:
     build-depends:
         base ^>=4.16.4.0
