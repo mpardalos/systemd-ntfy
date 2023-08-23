@@ -48,9 +48,6 @@ parseOptions = execParser opts
               )
           )
 
-notify :: ByteString -> IO ()
-notify message = void $ post "http://ntfy.sh/elf-goblin-alerts" message
-
 main :: IO ()
 main = do
   opts <- parseOptions
