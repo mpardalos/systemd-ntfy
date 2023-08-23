@@ -12,54 +12,28 @@ module Main where
 import Control.Concurrent (threadDelay)
 import Control.Monad (forever, void)
 import DBus
-  ( BusName,
-    InterfaceName,
-    IsVariant (fromVariant, toVariant),
-    MemberName,
-    MethodCall (methodCallBody, methodCallDestination),
-    MethodReturn (methodReturnBody),
-    ObjectPath,
+  ( IsVariant (fromVariant),
+    MethodCall (methodCallDestination),
     Signal (..),
-    Variant,
     methodCall,
-    typeOf,
   )
 import DBus.Client
-  ( Client,
-    MatchRule (..),
+  ( MatchRule (..),
     SignalHandler,
     addMatch,
-    call_,
-    connectSystem,
     getProperty,
     matchAny,
   )
 import DBus.TH.EDSL
-import Data.Functor ((<&>))
 import Data.Map (Map)
 import Data.Map qualified as Map
-import Data.String (fromString)
-import Safe (atMay, fromJustNote)
+import Safe (fromJustNote)
 
-newtype UnitObject = UnitObject ObjectPath
-  deriving (Show)
+type UnitObject = ObjectPath
 
-class IsObject a where
-  getPath :: a -> ObjectPath
-  getApplication :: a -> BusName
-
-instance IsObject UnitObject where
-  getPath (UnitObject path) = path
-  getApplication _ = "org.freedesktop.systemd1"
-
-getObjectProperty :: (IsObject obj, IsVariant a) => Client -> obj -> InterfaceName -> MemberName -> IO (Maybe a)
-getObjectProperty client obj iface property = do
-  getProperty
-    client
-    ( (methodCall (getPath obj) iface property)
-        { methodCallDestination = Just (getApplication obj)
-        }
-    )
+getObjectProperty :: IsVariant a => Client -> BusName -> ObjectPath -> InterfaceName -> MemberName -> IO (Maybe a)
+getObjectProperty client busName objPath iface property = do
+  getProperty client ((methodCall objPath iface property) {methodCallDestination = Just busName})
     >>= \case
       Right (fromVariant -> Just val) -> return (Just val)
       _ -> return Nothing
@@ -68,6 +42,7 @@ getStatus :: Client -> UnitObject -> IO (Maybe String)
 getStatus client unitObject =
   getObjectProperty
     client
+    "org.freedesktop.systemd1"
     unitObject
     "org.freedesktop.systemd1.Unit"
     "ActiveState"
@@ -77,25 +52,27 @@ interface'
   (Just "/org/freedesktop/systemd1")
   "org.freedesktop.systemd1.Manager"
   Nothing
-  [ "GetUnit" =:: ''String :-> Return ''ObjectPath `as` "getUnitPath",
+  [ "GetUnit" =:: ''String :-> Return ''ObjectPath,
     "Subscribe" =:: Return ''() `as` "systemdSubscribe"
   ]
 
-getUnit :: Client -> String -> IO (Maybe UnitObject)
-getUnit client name = do
-  mPath <- getUnitPath client name
-  return (UnitObject <$> mPath)
-
-onPropertiesChanged :: IsObject obj => Client -> obj -> (Signal -> IO ()) -> IO SignalHandler
-onPropertiesChanged client obj =
+onPropertiesChanged :: Client -> ObjectPath -> (InterfaceName -> Map String Variant -> [String] -> IO ()) -> IO SignalHandler
+onPropertiesChanged client objectPath f =
   addMatch
     client
     ( matchAny
-        { matchPath = Just (getPath obj),
+        { matchPath = Just objectPath,
           matchInterface = Just "org.freedesktop.DBus.Properties",
           matchMember = Just "PropertiesChanged"
         }
     )
+    $ \signal ->
+      case signal.signalBody of
+        [ fromVariant -> Just interfaceName,
+          fromVariant -> Just changedProperties,
+          fromVariant -> Just invalidatedProperties
+          ] -> f interfaceName changedProperties invalidatedProperties
+        _ -> error "Unexpected value for PropertiesChanged signal"
 
 main :: IO ()
 main = do
@@ -106,16 +83,9 @@ main = do
       <$> getUnit client "tailscaled.service"
 
   systemdSubscribe client
-  void $ onPropertiesChanged client unitObject $ \signal -> do
-    let changedProperties :: Map String Variant =
-          fromJustNote
-            "Signal body missing changed properties"
-            (fromVariant =<< signal.signalBody `atMay` 1)
-    let changedActiveState =
-          fromVariant =<< Map.lookup "ActiveState" changedProperties
-    case changedActiveState of
+  void $ onPropertiesChanged client unitObject $ \_ changedProperties _ ->
+    case fromVariant =<< Map.lookup "ActiveState" changedProperties of
       Just activeState -> putStrLn ("Active state for tailscaled is " ++ activeState)
       Nothing -> pure ()
-    return ()
 
   forever (threadDelay 1_000_000)
