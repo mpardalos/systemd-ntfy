@@ -22,6 +22,8 @@ main = do
 
   client <- connectSystem
 
+  systemdSubscribe client
+
   for_ serviceNames $ \serviceName -> do
     mHandler <- monitorService client serviceName $ \activeState -> do
       let msg = printf "Active state for %s is %s" serviceName activeState

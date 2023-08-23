@@ -8,7 +8,8 @@
 {-# HLINT ignore "Use forM_" #-}
 
 module SystemD
-  ( monitorService,
+  ( systemdSubscribe,
+    monitorService,
     -- * Convenience re-exports
     connectSystem,
     Client
@@ -61,7 +62,6 @@ interface'
 
 onPropertiesChanged :: Client -> ObjectPath -> (InterfaceName -> Map String Variant -> [String] -> IO ()) -> IO SignalHandler
 onPropertiesChanged client objectPath f = do
-  systemdSubscribe client
   addMatch
     client
     ( matchAny
@@ -82,10 +82,6 @@ onPropertiesChanged client objectPath f = do
 -- Use the full name of the service (i.e. 'httpd.service', not 'httpd')
 monitorService :: Client -> String -> (String -> IO ()) -> IO (Maybe SignalHandler)
 monitorService client serviceName f = do
-  -- This will be repeated for every call to monitorService, but that is ok.
-  -- It's nice to hide it inside here so we don't have to export it.
-  systemdSubscribe client
-
   getUnit client serviceName >>= \case
     Just unitObject -> do
       handler <- onPropertiesChanged client unitObject $ \_ changedProperties _ ->
